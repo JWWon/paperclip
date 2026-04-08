@@ -8,6 +8,7 @@ import {
   type AgentPermissionUpdate,
 } from "../api/agents";
 import { companySkillsApi } from "../api/companySkills";
+import { slackApi } from "../api/slack";
 import { budgetsApi } from "../api/budgets";
 import { heartbeatsApi } from "../api/heartbeats";
 import { instanceSettingsApi } from "../api/instanceSettings";
@@ -223,13 +224,14 @@ function scrollToContainerBottom(container: ScrollContainer, behavior: ScrollBeh
   container.scrollTo({ top: container.scrollHeight, behavior });
 }
 
-type AgentDetailView = "dashboard" | "instructions" | "configuration" | "skills" | "runs" | "budget";
+type AgentDetailView = "dashboard" | "instructions" | "configuration" | "skills" | "runs" | "budget" | "slack";
 
 function parseAgentDetailView(value: string | null): AgentDetailView {
   if (value === "instructions" || value === "prompts") return "instructions";
   if (value === "configure" || value === "configuration") return "configuration";
   if (value === "skills") return "skills";
   if (value === "budget") return "budget";
+  if (value === "slack") return "slack";
   if (value === "runs") return value;
   return "dashboard";
 }
@@ -1011,6 +1013,7 @@ export function AgentDetail() {
               { value: "configuration", label: "Configuration" },
               { value: "runs", label: "Runs" },
               { value: "budget", label: "Budget" },
+              { value: "slack", label: "Slack" },
             ]}
             value={activeView}
             onValueChange={(value) => navigate(`/agents/${canonicalAgentRef}/${value}`)}
@@ -1146,11 +1149,113 @@ export function AgentDetail() {
           />
         </div>
       ) : null}
+
+      {activeView === "slack" && resolvedCompanyId ? (
+        <AgentSlackPersonaSection companyId={resolvedCompanyId} agentId={agent.id} agentName={agent.name} />
+      ) : null}
     </div>
   );
 }
 
 /* ---- Helper components ---- */
+
+function AgentSlackPersonaSection({ companyId, agentId, agentName }: { companyId: string; agentId: string; agentName: string }) {
+  const { pushToast } = useToast();
+  const queryClient = useQueryClient();
+  const PERSONAS_KEY = ["slack", "personas", companyId] as const;
+
+  const { data: personas, isLoading } = useQuery({
+    queryKey: PERSONAS_KEY,
+    queryFn: () => slackApi.getPersonas(companyId),
+  });
+
+  const persona = personas?.find((p) => p.agentId === agentId);
+
+  const [displayName, setDisplayName] = useState(persona?.displayName ?? "");
+  const [iconUrl, setIconUrl] = useState(persona?.iconUrl ?? "");
+  const [channels, setChannels] = useState((persona?.slackChannelIds ?? []).join(", "));
+
+  useEffect(() => {
+    if (!persona) return;
+    setDisplayName(persona.displayName);
+    setIconUrl(persona.iconUrl ?? "");
+    setChannels((persona.slackChannelIds ?? []).join(", "));
+  }, [persona]);
+
+  const saveMutation = useMutation({
+    mutationFn: () =>
+      slackApi.updatePersona(companyId, agentId, {
+        displayName,
+        iconUrl: iconUrl || null,
+        slackChannelIds: channels.split(",").map((s) => s.trim()).filter(Boolean),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: PERSONAS_KEY });
+      pushToast({ title: "Slack persona saved", tone: "success" });
+    },
+    onError: (err) => {
+      pushToast({
+        title: "Failed to save Slack persona",
+        body: err instanceof Error ? err.message : "Unknown error",
+        tone: "error",
+      });
+    },
+  });
+
+  if (isLoading) {
+    return <div className="text-sm text-muted-foreground">Loading Slack persona...</div>;
+  }
+
+  return (
+    <div className="max-w-lg space-y-4">
+      <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Slack Persona for {agentName}</div>
+      <div className="space-y-3 rounded-md border border-border px-4 py-4">
+        <div className="space-y-1">
+          <label className="text-xs font-medium">Display name</label>
+          <input
+            className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            placeholder={agentName}
+          />
+          <p className="text-xs text-muted-foreground">Name shown in Slack messages from this agent.</p>
+        </div>
+        <div className="space-y-1">
+          <label className="text-xs font-medium">Avatar URL</label>
+          <div className="flex items-center gap-2">
+            <input
+              className="flex-1 rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
+              value={iconUrl}
+              onChange={(e) => setIconUrl(e.target.value)}
+              placeholder="https://..."
+            />
+            {iconUrl && (
+              <img
+                src={iconUrl}
+                alt="avatar preview"
+                className="h-8 w-8 rounded-full object-cover shrink-0"
+                onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+              />
+            )}
+          </div>
+        </div>
+        <div className="space-y-1">
+          <label className="text-xs font-medium">Assigned channels</label>
+          <input
+            className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm font-mono outline-none"
+            value={channels}
+            onChange={(e) => setChannels(e.target.value)}
+            placeholder="C01ABC123, C02DEF456"
+          />
+          <p className="text-xs text-muted-foreground">Comma-separated Slack channel IDs this agent monitors.</p>
+        </div>
+        <Button size="sm" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
+          {saveMutation.isPending ? "Saving..." : "Save"}
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 function SummaryRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -1722,6 +1827,7 @@ function PromptsTab({
   const isLocal =
     agent.adapterType === "claude_local" ||
     agent.adapterType === "codex_local" ||
+    agent.adapterType === "gemini_local" ||
     agent.adapterType === "opencode_local" ||
     agent.adapterType === "pi_local" ||
     agent.adapterType === "hermes_local" ||

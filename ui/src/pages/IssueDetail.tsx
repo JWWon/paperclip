@@ -3,6 +3,7 @@ import { pickTextColorForPillBg } from "@/lib/color-contrast";
 import { Link, useLocation, useNavigate, useParams } from "@/lib/router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { issuesApi } from "../api/issues";
+import { slackApi } from "../api/slack";
 import { approvalsApi } from "../api/approvals";
 import { activityApi } from "../api/activity";
 import { heartbeatsApi } from "../api/heartbeats";
@@ -362,6 +363,12 @@ export function IssueDetail() {
     queryFn: () => heartbeatsApi.liveRunsForIssue(issueId!),
     enabled: !!issueId,
     refetchInterval: 3000,
+  });
+
+  const { data: slackThread } = useQuery({
+    queryKey: ["slack", "issueThread", selectedCompanyId, issueId],
+    queryFn: () => slackApi.getIssueThread(selectedCompanyId!, issueId!),
+    enabled: !!selectedCompanyId && !!issueId,
   });
 
   const { data: activeRun } = useQuery({
@@ -1297,6 +1304,18 @@ export function IssueDetail() {
               </span>
               Live
             </span>
+          )}
+
+          {slackThread && (
+            <a
+              href={`https://slack.com/app_redirect?channel=${slackThread.slackChannelId}&message_ts=${slackThread.slackThreadTs}`}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400 shrink-0 hover:bg-emerald-500/20 transition-colors"
+            >
+              <MessageSquare className="h-3 w-3" />
+              View in Slack
+            </a>
           )}
 
           {issue.originKind === "routine_execution" && issue.originId && (

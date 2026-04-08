@@ -76,6 +76,10 @@ export interface Config {
   heartbeatSchedulerIntervalMs: number;
   companyDeletionEnabled: boolean;
   telemetryEnabled: boolean;
+  slackEnabled: boolean;
+  slackAppToken: string | undefined;
+  slackBotToken: string | undefined;
+  slackSigningSecret: string | undefined;
 }
 
 export function loadConfig(): Config {
@@ -269,5 +273,9 @@ export function loadConfig(): Config {
     heartbeatSchedulerIntervalMs: Math.max(10000, Number(process.env.HEARTBEAT_SCHEDULER_INTERVAL_MS) || 30000),
     companyDeletionEnabled,
     telemetryEnabled: fileConfig?.telemetry?.enabled ?? true,
+    slackEnabled: process.env.SLACK_ENABLED === "true" || (fileConfig as any)?.slack?.enabled === true,
+    slackAppToken: process.env.SLACK_APP_TOKEN || (fileConfig as any)?.slack?.appToken || undefined,
+    slackBotToken: process.env.SLACK_BOT_TOKEN || (fileConfig as any)?.slack?.botToken || undefined,
+    slackSigningSecret: process.env.SLACK_SIGNING_SECRET || (fileConfig as any)?.slack?.signingSecret || undefined,
   };
 }

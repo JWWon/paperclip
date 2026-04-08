@@ -60,3 +60,6 @@ export { pluginEntities } from "./plugin_entities.js";
 export { pluginJobs, pluginJobRuns } from "./plugin_jobs.js";
 export { pluginWebhookDeliveries } from "./plugin_webhooks.js";
 export { pluginLogs } from "./plugin_logs.js";
+export { slackThreadMappings } from "./slack_thread_mappings.js";
+export { slackAgentPersonas } from "./slack_agent_personas.js";
+export { slackCompanyConfig } from "./slack_company_config.js";

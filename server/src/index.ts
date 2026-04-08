@@ -626,6 +626,22 @@ export async function startServer(): Promise<StartedServer> {
     }, config.heartbeatSchedulerIntervalMs);
   }
   
+  // Slack Bridge — Socket Mode integration
+  if (config.slackEnabled && config.slackAppToken && config.slackBotToken) {
+    const { initSlackBridge } = await import("./services/slack-bridge/index.js");
+    const slackBridge = initSlackBridge(db as any, {
+      appToken: config.slackAppToken,
+      botToken: config.slackBotToken,
+      signingSecret: config.slackSigningSecret,
+    });
+    void slackBridge.start().catch((err) => {
+      logger.error({ err }, "Slack bridge startup failed");
+    });
+    process.once("SIGINT", () => { void slackBridge.stop(); });
+    process.once("SIGTERM", () => { void slackBridge.stop(); });
+    logger.info("Slack bridge enabled — Socket Mode starting");
+  }
+
   if (config.databaseBackupEnabled) {
     const backupIntervalMs = config.databaseBackupIntervalMinutes * 60 * 1000;
     let backupInFlight = false;
