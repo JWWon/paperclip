@@ -4,9 +4,32 @@ import type { Db } from "@paperclipai/db";
 import { slackCompanyConfig } from "@paperclipai/db";
 import { assertCompanyAccess } from "./authz.js";
 import { getSlackBridge } from "../services/slack-bridge/index.js";
+import { logger } from "../middleware/logger.js";
+import { secretService } from "../services/secrets.js";
+import { logActivity } from "../services/activity-log.js";
 
 export function slackRoutes(db: Db) {
   const router = Router();
+  const secretSvc = secretService(db);
+
+  async function upsertTokenSecret(
+    companyId: string,
+    tokenName: string,
+    tokenValue: string,
+    actor: { userId?: string | null },
+  ): Promise<string> {
+    const existing = await secretSvc.getByName(companyId, tokenName);
+    if (existing) {
+      await secretSvc.rotate(existing.id, { value: tokenValue }, { userId: actor.userId ?? null, agentId: null });
+      return existing.id;
+    }
+    const created = await secretSvc.create(
+      companyId,
+      { name: tokenName, value: tokenValue, provider: "local_encrypted" },
+      { userId: actor.userId ?? null, agentId: null },
+    );
+    return created.id;
+  }
 
   // GET /api/companies/:companyId/slack/config
   router.get("/companies/:companyId/slack/config", async (req, res) => {
@@ -19,7 +42,17 @@ export function slackRoutes(db: Db) {
       .where(eq(slackCompanyConfig.companyId, companyId))
       .limit(1);
 
-    res.json(config ?? { companyId, enabled: false, channels: {} });
+    if (!config) {
+      res.json({ companyId, enabled: false, channels: {}, appTokenConfigured: false, botTokenConfigured: false });
+      return;
+    }
+
+    const { appTokenSecretId, botTokenSecretId, ...safeConfig } = config;
+    res.json({
+      ...safeConfig,
+      appTokenConfigured: appTokenSecretId != null,
+      botTokenConfigured: botTokenSecretId != null,
+    });
   });
 
   // PUT /api/companies/:companyId/slack/config
@@ -27,10 +60,14 @@ export function slackRoutes(db: Db) {
     const { companyId } = req.params;
     assertCompanyAccess(req, companyId);
 
-    const { enabled, channels } = req.body as {
+    const { enabled, channels, appToken, botToken } = req.body as {
       enabled?: boolean;
       channels?: Record<string, string>;
+      appToken?: string;
+      botToken?: string;
     };
+
+    const actor = { userId: req.actor.userId ?? "board" };
 
     const [existing] = await db
       .select()
@@ -38,13 +75,26 @@ export function slackRoutes(db: Db) {
       .where(eq(slackCompanyConfig.companyId, companyId))
       .limit(1);
 
+    const patch: Record<string, unknown> = { updatedAt: new Date() };
+    if (enabled !== undefined) patch.enabled = enabled;
+    if (channels !== undefined) patch.channels = channels;
+
+    if (appToken) {
+      patch.appTokenSecretId = await upsertTokenSecret(companyId, "slack:app_token", appToken, actor);
+    }
+    if (botToken) {
+      patch.botTokenSecretId = await upsertTokenSecret(companyId, "slack:bot_token", botToken, actor);
+    }
+
     let config;
     if (existing) {
       const [updated] = await db
         .update(slackCompanyConfig)
         .set({
-          enabled: enabled ?? existing.enabled,
-          channels: channels ?? existing.channels,
+          enabled: (patch.enabled as boolean | undefined) ?? existing.enabled,
+          channels: (patch.channels as Record<string, string> | undefined) ?? existing.channels,
+          appTokenSecretId: (patch.appTokenSecretId as string | undefined) ?? existing.appTokenSecretId,
+          botTokenSecretId: (patch.botTokenSecretId as string | undefined) ?? existing.botTokenSecretId,
           updatedAt: new Date(),
         })
         .where(eq(slackCompanyConfig.id, existing.id))
@@ -55,12 +105,28 @@ export function slackRoutes(db: Db) {
         .insert(slackCompanyConfig)
         .values({
           companyId,
-          enabled: enabled ?? false,
-          channels: channels ?? {},
+          enabled: (patch.enabled as boolean | undefined) ?? false,
+          channels: (patch.channels as Record<string, string> | undefined) ?? {},
+          appTokenSecretId: (patch.appTokenSecretId as string | undefined) ?? null,
+          botTokenSecretId: (patch.botTokenSecretId as string | undefined) ?? null,
         })
         .returning();
       config = created;
     }
+
+    await logActivity(db, {
+      companyId,
+      actorType: "user",
+      actorId: actor.userId,
+      action: "slack.config.updated",
+      entityType: "slack_company_config",
+      entityId: config.id,
+      details: {
+        enabled: config.enabled,
+        appTokenUpdated: !!appToken,
+        botTokenUpdated: !!botToken,
+      },
+    });
 
     // Refresh the bridge for this company
     const bridge = getSlackBridge();
@@ -68,7 +134,12 @@ export function slackRoutes(db: Db) {
       await bridge.refreshCompany(companyId);
     }
 
-    res.json(config);
+    const { appTokenSecretId: _a, botTokenSecretId: _b, ...safeConfig } = config;
+    res.json({
+      ...safeConfig,
+      appTokenConfigured: _a != null,
+      botTokenConfigured: _b != null,
+    });
   });
 
   // GET /api/companies/:companyId/slack/personas
@@ -120,7 +191,7 @@ export function slackRoutes(db: Db) {
     assertCompanyAccess(req, companyId);
 
     const bridge = getSlackBridge();
-    const connected = bridge?.isConnected() ?? false;
+    const connected = bridge?.isConnected(companyId) ?? false;
 
     const [config] = await db
       .select()
@@ -146,20 +217,21 @@ export function slackRoutes(db: Db) {
     };
 
     const bridge = getSlackBridge();
-    if (!bridge?.isConnected()) {
+    if (!bridge?.isConnected(companyId)) {
       res.status(503).json({ error: "Slack not connected" });
       return;
     }
 
     try {
-      const ts = await bridge.getSocketManager()!.postMessage({
+      const ts = await bridge.getSocketManager(companyId)!.postMessage({
         channelId,
         text: message ?? "Test message from Paperclip Slack Bridge",
         username: "Paperclip",
       });
       res.json({ success: true, messageTs: ts });
     } catch (err) {
-      res.status(500).json({ error: "Failed to send test message", detail: String(err) });
+      logger.error({ err }, "Failed to send Slack test message");
+      res.status(500).json({ error: "Failed to send test message" });
     }
   });
 

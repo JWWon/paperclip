@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { MessageSquare, Plus, Trash2, Send, Loader2 } from "lucide-react";
+import { MessageSquare, Plus, Trash2, Send, Loader2, ChevronDown, ChevronRight } from "lucide-react";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useToast } from "../context/ToastContext";
 import { slackApi, type SlackPersona } from "../api/slack";
 import { Field, ToggleField } from "../components/agent-config-primitives";
 import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 
 const SLACK_QUERY_KEYS = {
   config: (companyId: string) => ["slack", "config", companyId] as const,
@@ -22,11 +23,10 @@ export function SlackSettings() {
 
   // Config state
   const [enabled, setEnabled] = useState(false);
+  const [channels, setChannels] = useState<{ key: string; value: string }[]>([]);
+  const [setupGuideOpen, setSetupGuideOpen] = useState(false);
   const [appToken, setAppToken] = useState("");
   const [botToken, setBotToken] = useState("");
-  const [channels, setChannels] = useState<{ key: string; value: string }[]>([]);
-  const [showAppToken, setShowAppToken] = useState(false);
-  const [showBotToken, setShowBotToken] = useState(false);
 
   // Persona edit state
   const [editingPersona, setEditingPersona] = useState<string | null>(null);
@@ -64,6 +64,8 @@ export function SlackSettings() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: SLACK_QUERY_KEYS.config(selectedCompanyId!) });
       queryClient.invalidateQueries({ queryKey: SLACK_QUERY_KEYS.status(selectedCompanyId!) });
+      setAppToken("");
+      setBotToken("");
       pushToast({ title: "Slack configuration saved", tone: "success" });
     },
     onError: (err) => {
@@ -172,9 +174,9 @@ export function SlackSettings() {
         </span>
       </div>
 
-      {status?.error && (
+      {!isConnected && enabled && (
         <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          {status.error}
+          Slack connection is not active. Check your tokens and server logs.
         </div>
       )}
 
@@ -194,40 +196,138 @@ export function SlackSettings() {
       {/* Tokens */}
       <div className="space-y-4">
         <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Tokens</div>
-        <div className="space-y-3 rounded-md border border-border px-4 py-4">
-          <Field label="App Token" hint="Starts with xapp-. Required for Socket Mode.">
+        <div className="rounded-md border border-border px-4 py-4 space-y-4">
+          <div className="space-y-1.5">
             <div className="flex items-center gap-2">
-              <input
-                className="flex-1 rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm font-mono outline-none"
-                type={showAppToken ? "text" : "password"}
-                value={appToken}
-                onChange={(e) => setAppToken(e.target.value)}
-                placeholder="xapp-..."
-              />
-              <Button size="sm" variant="ghost" onClick={() => setShowAppToken((v) => !v)}>
-                {showAppToken ? "Hide" : "Show"}
-              </Button>
+              <label className="text-sm font-medium">App Token</label>
+              {config?.appTokenConfigured ? (
+                <span className="inline-flex items-center rounded-full bg-green-500/15 px-2 py-0.5 text-[10px] font-medium text-green-700 dark:text-green-400">Configured</span>
+              ) : (
+                <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">Not configured</span>
+              )}
             </div>
-          </Field>
-          <Field label="Bot Token" hint="Starts with xoxb-. Used to post messages.">
+            <input
+              type="password"
+              className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
+              placeholder="Enter new app token or leave blank to keep existing"
+              value={appToken}
+              onChange={(e) => setAppToken(e.target.value)}
+            />
+          </div>
+          <div className="space-y-1.5">
             <div className="flex items-center gap-2">
-              <input
-                className="flex-1 rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm font-mono outline-none"
-                type={showBotToken ? "text" : "password"}
-                value={botToken}
-                onChange={(e) => setBotToken(e.target.value)}
-                placeholder="xoxb-..."
-              />
-              <Button size="sm" variant="ghost" onClick={() => setShowBotToken((v) => !v)}>
-                {showBotToken ? "Hide" : "Show"}
-              </Button>
+              <label className="text-sm font-medium">Bot Token</label>
+              {config?.botTokenConfigured ? (
+                <span className="inline-flex items-center rounded-full bg-green-500/15 px-2 py-0.5 text-[10px] font-medium text-green-700 dark:text-green-400">Configured</span>
+              ) : (
+                <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">Not configured</span>
+              )}
             </div>
-          </Field>
-          <p className="text-xs text-muted-foreground">
-            Tokens are write-only. Leave blank to keep the existing value.
-          </p>
+            <input
+              type="password"
+              className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
+              placeholder="Enter new bot token or leave blank to keep existing"
+              value={botToken}
+              onChange={(e) => setBotToken(e.target.value)}
+            />
+          </div>
         </div>
       </div>
+
+      {/* Setup Guide */}
+      <Collapsible open={setupGuideOpen} onOpenChange={setSetupGuideOpen}>
+        <CollapsibleTrigger asChild>
+          <button className="flex w-full items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wide hover:text-foreground transition-colors">
+            {setupGuideOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+            Setup Guide
+          </button>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <div className="mt-3 space-y-5 rounded-md border border-border px-5 py-5 text-sm">
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-foreground text-background text-[10px] font-bold">1</span>
+                <span className="font-medium">Create a Slack App</span>
+              </div>
+              <div className="ml-7 space-y-1.5 text-xs text-muted-foreground">
+                <p>Go to <code className="rounded bg-muted px-1 py-0.5 font-mono text-foreground">api.slack.com/apps</code> and create a new app from scratch.</p>
+                <p>Then enable <strong className="text-foreground">Socket Mode</strong>:</p>
+                <ul className="ml-4 list-disc space-y-0.5">
+                  <li>Settings → Socket Mode → Toggle on</li>
+                  <li>Generate an <strong className="text-foreground">App-Level Token</strong> with the <code className="rounded bg-muted px-1 py-0.5 font-mono">connections:write</code> scope</li>
+                  <li>Copy the token (starts with <code className="rounded bg-muted px-1 py-0.5 font-mono">xapp-</code>) — this is your <strong className="text-foreground">App Token</strong></li>
+                </ul>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-foreground text-background text-[10px] font-bold">2</span>
+                <span className="font-medium">Configure Bot Scopes</span>
+              </div>
+              <div className="ml-7 space-y-1.5 text-xs text-muted-foreground">
+                <p>Go to <strong className="text-foreground">OAuth &amp; Permissions</strong> → Bot Token Scopes → Add:</p>
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {["app_mentions:read", "channels:history", "channels:read", "chat:write", "chat:write.customize", "users:read"].map((scope) => (
+                    <code key={scope} className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">{scope}</code>
+                  ))}
+                </div>
+                <p className="mt-1.5">Install the app to your workspace, then copy the <strong className="text-foreground">Bot User OAuth Token</strong> (starts with <code className="rounded bg-muted px-1 py-0.5 font-mono">xoxb-</code>).</p>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-foreground text-background text-[10px] font-bold">3</span>
+                <span className="font-medium">Subscribe to Events</span>
+              </div>
+              <div className="ml-7 space-y-1.5 text-xs text-muted-foreground">
+                <p>Go to <strong className="text-foreground">Event Subscriptions</strong> → Enable Events → Subscribe to bot events:</p>
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {["app_mention", "message.channels"].map((evt) => (
+                    <code key={evt} className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">{evt}</code>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-foreground text-background text-[10px] font-bold">4</span>
+                <span className="font-medium">Enter Tokens</span>
+              </div>
+              <div className="ml-7 text-xs text-muted-foreground">
+                <p>Paste the <strong className="text-foreground">App Token</strong> and <strong className="text-foreground">Bot Token</strong> into the fields above and save. Tokens are encrypted at rest and never displayed after saving.</p>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-foreground text-background text-[10px] font-bold">5</span>
+                <span className="font-medium">Map Channels &amp; Personas</span>
+              </div>
+              <div className="ml-7 space-y-1.5 text-xs text-muted-foreground">
+                <p>Enable the integration toggle above, then:</p>
+                <ul className="ml-4 list-disc space-y-0.5">
+                  <li>Add <strong className="text-foreground">channel mappings</strong> — map a group name to a Slack channel ID</li>
+                  <li>Configure <strong className="text-foreground">agent personas</strong> — set a display name, avatar, and assigned channels for each agent</li>
+                </ul>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-foreground text-background text-[10px] font-bold">6</span>
+                <span className="font-medium">Invite the Bot</span>
+              </div>
+              <div className="ml-7 text-xs text-muted-foreground">
+                <p>In each Slack channel you mapped, invite the bot:</p>
+                <code className="mt-1 block rounded bg-muted px-3 py-1.5 font-mono text-[11px]">/invite @your-bot-name</code>
+              </div>
+            </div>
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
 
       {/* Channel Mappings */}
       <div className="space-y-4">

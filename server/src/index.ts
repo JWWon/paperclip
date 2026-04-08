@@ -627,13 +627,12 @@ export async function startServer(): Promise<StartedServer> {
   }
   
   // Slack Bridge — Socket Mode integration
-  if (config.slackEnabled && config.slackAppToken && config.slackBotToken) {
+  if (config.slackEnabled) {
     const { initSlackBridge } = await import("./services/slack-bridge/index.js");
-    const slackBridge = initSlackBridge(db as any, {
-      appToken: config.slackAppToken,
-      botToken: config.slackBotToken,
-      signingSecret: config.slackSigningSecret,
-    });
+    const envConfig = config.slackAppToken && config.slackBotToken
+      ? { appToken: config.slackAppToken, botToken: config.slackBotToken, signingSecret: config.slackSigningSecret }
+      : undefined;
+    const slackBridge = initSlackBridge(db as any, envConfig);
     void slackBridge.start().catch((err) => {
       logger.error({ err }, "Slack bridge startup failed");
     });

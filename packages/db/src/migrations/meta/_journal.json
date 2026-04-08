@@ -379,6 +379,13 @@
       "when": 1775633559775,
       "tag": "0053_stale_rockslide",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1775659128958,
+      "tag": "0054_right_polaris",
+      "breakpoints": true
     }
   ]
 }

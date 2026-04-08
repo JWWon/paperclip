@@ -78,7 +78,12 @@ program
   .description("Update configuration sections")
   .option("-c, --config <path>", "Path to config file")
   .option("-d, --data-dir <path>", DATA_DIR_OPTION_HELP)
-  .option("-s, --section <section>", "Section to configure (llm, database, logging, server, storage, secrets)")
+  .option("-s, --section <section>", "Section to configure (llm, database, logging, server, storage, secrets, slack)")
+  .option("--context <path>", "Path to CLI context file")
+  .option("--profile <name>", "CLI context profile name")
+  .option("--api-base <url>", "Base URL for the Paperclip API (required for slack section)")
+  .option("--api-key <token>", "Bearer token for authenticated calls")
+  .option("-C, --company-id <id>", "Company ID (required for slack section)")
   .action(configure);
 
 program

@@ -9,6 +9,7 @@ import { promptLogging } from "../prompts/logging.js";
 import { defaultSecretsConfig, promptSecrets } from "../prompts/secrets.js";
 import { defaultStorageConfig, promptStorage } from "../prompts/storage.js";
 import { promptServer } from "../prompts/server.js";
+import { promptSlackTokens } from "../prompts/slack.js";
 import {
   resolveDefaultBackupDir,
   resolveDefaultEmbeddedPostgresDir,
@@ -16,8 +17,9 @@ import {
   resolvePaperclipInstanceId,
 } from "../config/home.js";
 import { printPaperclipCliBanner } from "../utils/banner.js";
+import { resolveCommandContext, handleCommandError, type BaseClientOptions } from "./client/common.js";
 
-type Section = "llm" | "database" | "logging" | "server" | "storage" | "secrets";
+type Section = "llm" | "database" | "logging" | "server" | "storage" | "secrets" | "slack";
 
 const SECTION_LABELS: Record<Section, string> = {
   llm: "LLM Provider",
@@ -26,6 +28,7 @@ const SECTION_LABELS: Record<Section, string> = {
   server: "Server",
   storage: "Storage",
   secrets: "Secrets",
+  slack: "Slack Integration",
 };
 
 function defaultConfig(): PaperclipConfig {
@@ -71,8 +74,7 @@ function defaultConfig(): PaperclipConfig {
   };
 }
 
-export async function configure(opts: {
-  config?: string;
+export async function configure(opts: BaseClientOptions & {
   section?: string;
 }): Promise<void> {
   printPaperclipCliBanner();
@@ -171,6 +173,43 @@ export async function configure(opts: {
           }
         }
         break;
+      case "slack": {
+        let ctx;
+        try {
+          ctx = resolveCommandContext(opts, { requireCompany: true });
+        } catch (err) {
+          handleCommandError(err);
+        }
+        const tokens = await promptSlackTokens();
+        if (!tokens) {
+          continueLoop = false;
+          break;
+        }
+        try {
+          await ctx!.api.put(`/api/companies/${ctx!.companyId}/slack/config`, tokens);
+          p.log.success("Slack tokens saved.");
+        } catch (err) {
+          handleCommandError(err);
+        }
+        // Slack section does not write to the local config file — skip the writeConfig below
+        config.$meta.updatedAt = new Date().toISOString();
+        config.$meta.source = "configure";
+        p.log.success(`${SECTION_LABELS[section]} configuration updated.`);
+        if (opts.section) {
+          continueLoop = false;
+        } else {
+          const another = await p.confirm({
+            message: "Configure another section?",
+            initialValue: false,
+          });
+          if (p.isCancel(another) || !another) {
+            continueLoop = false;
+          } else {
+            section = undefined;
+          }
+        }
+        continue;
+      }
     }
 
     config.$meta.updatedAt = new Date().toISOString();

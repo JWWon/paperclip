@@ -20,6 +20,7 @@ export type SlackMessageHandler = (event: {
 export class SocketManager {
   private app: App | null = null;
   private connected = false;
+  private botUserId: string | null = null;
 
   constructor(private config: SlackSocketConfig) {}
 
@@ -33,6 +34,7 @@ export class SocketManager {
 
     this.app.event("app_mention", async ({ event }: SlackEventMiddlewareArgs<"app_mention">) => {
       try {
+        if (event.user === this.botUserId) return;
         await onMessage({
           text: event.text ?? "",
           userId: event.user ?? "unknown",
@@ -46,6 +48,8 @@ export class SocketManager {
     });
 
     this.app.event("message", async ({ event }: SlackEventMiddlewareArgs<"message">) => {
+      if ('bot_id' in event && event.bot_id) return;
+      if ('user' in event && event.user === this.botUserId) return;
       // Only handle threaded messages (replies) — non-threaded handled by app_mention
       if ("thread_ts" in event && event.thread_ts && event.subtype === undefined) {
         try {
@@ -65,6 +69,15 @@ export class SocketManager {
     await this.app.start();
     this.connected = true;
     logger.info("Slack Socket Mode connected");
+
+    const authResult = await this.app.client.auth.test();
+    this.botUserId = authResult.user_id ?? null;
+    logger.info({ botUserId: this.botUserId }, "Identified bot user");
+
+    this.app.error(async (error) => {
+      this.connected = false;
+      logger.error({ err: error }, "Slack Socket Mode error");
+    });
   }
 
   async stop() {

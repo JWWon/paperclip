@@ -3,6 +3,8 @@ import { api } from "./client";
 export interface SlackConfig {
   enabled: boolean;
   channels: Record<string, string>;
+  appTokenConfigured: boolean;
+  botTokenConfigured: boolean;
 }
 
 export interface SlackPersona {
@@ -15,7 +17,8 @@ export interface SlackPersona {
 
 export interface SlackStatus {
   connected: boolean;
-  error: string | null;
+  enabled: boolean;
+  channels: Record<string, string>;
 }
 
 export interface SlackTestMessageRequest {
@@ -35,7 +38,7 @@ export const slackApi = {
   getConfig: (companyId: string) =>
     api.get<SlackConfig>(`/companies/${companyId}/slack/config`),
 
-  updateConfig: (companyId: string, data: Partial<SlackConfig>) =>
+  updateConfig: (companyId: string, data: { enabled?: boolean; channels?: Record<string, string>; appToken?: string; botToken?: string }) =>
     api.put<SlackConfig>(`/companies/${companyId}/slack/config`, data),
 
   getPersonas: (companyId: string) =>

@@ -1,5 +1,6 @@
 import { pgTable, uuid, boolean, timestamp, jsonb, uniqueIndex } from "drizzle-orm/pg-core";
 import { companies } from "./companies.js";
+import { companySecrets } from "./company_secrets.js";
 
 /**
  * `slack_company_config` table — stores per-company Slack integration settings.
@@ -20,6 +21,8 @@ export const slackCompanyConfig = pgTable(
       .references(() => companies.id, { onDelete: "cascade" }),
     enabled: boolean("enabled").notNull().default(false),
     channels: jsonb("channels").$type<Record<string, string>>().default({}),
+    appTokenSecretId: uuid("app_token_secret_id").references(() => companySecrets.id, { onDelete: "set null" }),
+    botTokenSecretId: uuid("bot_token_secret_id").references(() => companySecrets.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

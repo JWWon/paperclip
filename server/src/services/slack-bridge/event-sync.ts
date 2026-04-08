@@ -1,5 +1,7 @@
 import type { LiveEvent } from "@paperclipai/shared";
 import type { Db } from "@paperclipai/db";
+import { issueComments } from "@paperclipai/db";
+import { eq } from "drizzle-orm";
 import { logger as rootLogger } from "../../middleware/logger.js";
 import { subscribeCompanyLiveEvents } from "../live-events.js";
 import { PersonaManager } from "./persona-manager.js";
@@ -55,7 +57,7 @@ export class EventSync {
       action?: string;
       actorType?: string;
       actorId?: string;
-      detail?: Record<string, unknown>;
+      details?: Record<string, unknown>;
     };
 
     // Only sync agent-originated issue actions to Slack
@@ -68,7 +70,7 @@ export class EventSync {
     const persona = await this.personaManager.findByAgentId(this.companyId, agentId);
     if (!persona) return;
 
-    if (payload.entityType === "issue_comment" && payload.action === "created") {
+    if (payload.entityType === "issue" && payload.action === "issue.comment_added") {
       await this.syncCommentToSlack(payload, persona);
     } else if (payload.entityType === "issue" && payload.action === "created") {
       await this.syncNewIssueToSlack(payload, persona);
@@ -82,28 +84,28 @@ export class EventSync {
     persona: { displayName: string; iconUrl: string | null; slackChannelIds: unknown; agentId: string },
   ) {
     const issueId = payload.entityId as string | undefined;
-    // For comments, the parent issue ID is in the detail
-    const parentIssueId = (payload.detail as Record<string, unknown>)?.issueId as string | undefined;
-    const targetIssueId = parentIssueId || issueId;
-    if (!targetIssueId) return;
+    if (!issueId) return;
 
-    const mapping = await this.threadTracker.findByIssueId(targetIssueId);
+    const mapping = await this.threadTracker.findByIssueId(issueId);
     if (!mapping) return;
 
-    const content = (payload.detail as Record<string, unknown>)?.content as string | undefined;
-    if (!content) return;
+    const commentId = (payload.details as Record<string, unknown>)?.commentId as string | undefined;
+    if (!commentId) return;
+
+    const [comment] = await this.db.select().from(issueComments).where(eq(issueComments.id, commentId));
+    if (!comment?.body) return;
 
     try {
       await this.socketManager.postMessage({
         channelId: mapping.slackChannelId,
-        text: content,
+        text: comment.body,
         threadTs: mapping.slackThreadTs,
         username: persona.displayName,
         iconUrl: persona.iconUrl ?? undefined,
       });
-      logger.debug({ issueId: targetIssueId }, "Synced comment to Slack thread");
+      logger.debug({ issueId }, "Synced comment to Slack thread");
     } catch (err) {
-      logger.warn({ err, issueId: targetIssueId }, "Failed to sync comment to Slack");
+      logger.warn({ err, issueId }, "Failed to sync comment to Slack");
     }
   }
 
@@ -123,8 +125,8 @@ export class EventSync {
     const targetChannelId = agentChannels[0] || this.getDefaultChannel();
     if (!targetChannelId) return;
 
-    const title = (payload.detail as Record<string, unknown>)?.title as string | undefined;
-    const description = (payload.detail as Record<string, unknown>)?.description as string | undefined;
+    const title = (payload.details as Record<string, unknown>)?.title as string | undefined;
+    const description = (payload.details as Record<string, unknown>)?.description as string | undefined;
     const text = `*New issue created:* ${title ?? "Untitled"}\n${description ? description.slice(0, 300) : ""}`;
 
     try {
@@ -159,7 +161,7 @@ export class EventSync {
     const mapping = await this.threadTracker.findByIssueId(issueId);
     if (!mapping) return;
 
-    const changes = (payload.detail as Record<string, unknown>)?.changes as Record<string, unknown> | undefined;
+    const changes = (payload.details as Record<string, unknown>)?.changes as Record<string, unknown> | undefined;
     if (!changes) return;
 
     // Only sync meaningful status changes
