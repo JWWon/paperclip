@@ -184,8 +184,8 @@ export class EventSync {
   }
 
   private getDefaultChannel(): string | undefined {
-    // Return the first configured channel as default
-    const channels = Object.values(this.channelConfig);
-    return channels[0];
+    // Keys are channel IDs in the normalized format { channelId: label }
+    const channelIds = Object.keys(this.channelConfig);
+    return channelIds[0];
   }
 }

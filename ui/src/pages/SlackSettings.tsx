@@ -21,16 +21,16 @@ export function SlackSettings() {
   const { pushToast } = useToast();
   const queryClient = useQueryClient();
 
-  // Config state
+  // Config state — channels: key=channelId, value=label
   const [enabled, setEnabled] = useState(false);
   const [channels, setChannels] = useState<{ key: string; value: string }[]>([]);
   const [setupGuideOpen, setSetupGuideOpen] = useState(false);
   const [appToken, setAppToken] = useState("");
   const [botToken, setBotToken] = useState("");
 
-  // Persona edit state
+  // Persona edit state — channels as string[] of selected channel IDs
   const [editingPersona, setEditingPersona] = useState<string | null>(null);
-  const [personaEdits, setPersonaEdits] = useState<Record<string, { displayName: string; iconUrl: string; channels: string }>>({});
+  const [personaEdits, setPersonaEdits] = useState<Record<string, { displayName: string; iconUrl: string; channelIds: string[] }>>({});
 
   const { data: config, isLoading: configLoading } = useQuery({
     queryKey: SLACK_QUERY_KEYS.config(selectedCompanyId!),
@@ -54,6 +54,7 @@ export function SlackSettings() {
   useEffect(() => {
     if (!config) return;
     setEnabled(config.enabled);
+    // config.channels is now { channelId: label } — key=channelId, value=label
     const channelEntries = Object.entries(config.channels ?? {}).map(([key, value]) => ({ key, value }));
     setChannels(channelEntries.length > 0 ? channelEntries : []);
   }, [config]);
@@ -116,7 +117,14 @@ export function SlackSettings() {
     return <div className="text-sm text-muted-foreground">No company selected.</div>;
   }
 
+  // Build a lookup from channelId → label for the picker
+  const channelLookup: Record<string, string> = {};
+  for (const { key, value } of channels) {
+    if (key.trim()) channelLookup[key.trim()] = value.trim();
+  }
+
   function handleSaveConfig() {
+    // key=channelId, value=label — already in canonical format
     const channelMap: Record<string, string> = {};
     for (const { key, value } of channels) {
       if (key.trim()) channelMap[key.trim()] = value.trim();
@@ -132,16 +140,12 @@ export function SlackSettings() {
   function handleSavePersona(persona: SlackPersona) {
     const edit = personaEdits[persona.agentId];
     if (!edit) return;
-    const channelIds = edit.channels
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
     updatePersonaMutation.mutate({
       agentId: persona.agentId,
       data: {
         displayName: edit.displayName,
         iconUrl: edit.iconUrl || null,
-        slackChannelIds: channelIds,
+        slackChannelIds: edit.channelIds,
       },
     });
   }
@@ -153,19 +157,48 @@ export function SlackSettings() {
       [persona.agentId]: {
         displayName: persona.displayName,
         iconUrl: persona.iconUrl ?? "",
-        channels: (persona.slackChannelIds ?? []).join(", "),
+        channelIds: [...(persona.slackChannelIds ?? [])],
       },
     }));
   }
 
+  function togglePersonaChannel(agentId: string, channelId: string) {
+    setPersonaEdits((prev) => {
+      const edit = prev[agentId];
+      if (!edit) return prev;
+      const has = edit.channelIds.includes(channelId);
+      return {
+        ...prev,
+        [agentId]: {
+          ...edit,
+          channelIds: has
+            ? edit.channelIds.filter((id) => id !== channelId)
+            : [...edit.channelIds, channelId],
+        },
+      };
+    });
+  }
+
+  // Build channel → agents summary from personas data
+  const channelAgentMap: Record<string, SlackPersona[]> = {};
+  if (personas) {
+    for (const ch of channels) {
+      if (ch.key.trim()) {
+        channelAgentMap[ch.key.trim()] = personas.filter(
+          (p) => (p.slackChannelIds ?? []).includes(ch.key.trim()),
+        );
+      }
+    }
+  }
+
   const isConnected = status?.connected ?? false;
+  const configuredChannelIds = Object.keys(channelLookup);
 
   return (
     <div className="max-w-2xl space-y-6">
       <div className="flex items-center gap-2">
         <MessageSquare className="h-5 w-5 text-muted-foreground" />
         <h1 className="text-lg font-semibold">Slack Integration</h1>
-        {/* Connection status dot */}
         <span className="flex items-center gap-1.5 ml-2 text-xs text-muted-foreground">
           <span
             className={`inline-block h-2 w-2 rounded-full ${isConnected ? "bg-green-500" : "bg-red-500"}`}
@@ -304,13 +337,13 @@ export function SlackSettings() {
             <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-foreground text-background text-[10px] font-bold">5</span>
-                <span className="font-medium">Map Channels &amp; Personas</span>
+                <span className="font-medium">Add Channels &amp; Assign Agents</span>
               </div>
               <div className="ml-7 space-y-1.5 text-xs text-muted-foreground">
                 <p>Enable the integration toggle above, then:</p>
                 <ul className="ml-4 list-disc space-y-0.5">
-                  <li>Add <strong className="text-foreground">channel mappings</strong> — map a group name to a Slack channel ID</li>
-                  <li>Configure <strong className="text-foreground">agent personas</strong> — set a display name, avatar, and assigned channels for each agent</li>
+                  <li>Add <strong className="text-foreground">channels</strong> below — enter a Slack channel ID and an optional label</li>
+                  <li>Edit each <strong className="text-foreground">agent persona</strong> — select which channels the agent participates in using the checkboxes</li>
                 </ul>
               </div>
             </div>
@@ -321,7 +354,7 @@ export function SlackSettings() {
                 <span className="font-medium">Invite the Bot</span>
               </div>
               <div className="ml-7 text-xs text-muted-foreground">
-                <p>In each Slack channel you mapped, invite the bot:</p>
+                <p>In each Slack channel you added, invite the bot:</p>
                 <code className="mt-1 block rounded bg-muted px-3 py-1.5 font-mono text-[11px]">/invite @your-bot-name</code>
               </div>
             </div>
@@ -329,11 +362,11 @@ export function SlackSettings() {
         </CollapsibleContent>
       </Collapsible>
 
-      {/* Channel Mappings */}
+      {/* Channels */}
       <div className="space-y-4">
-        <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Channel Mappings</div>
+        <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Channels</div>
         <div className="space-y-3 rounded-md border border-border px-4 py-4">
-          <p className="text-xs text-muted-foreground">Map functional group names to Slack channel IDs.</p>
+          <p className="text-xs text-muted-foreground">Add the Slack channels your agents will use. The channel ID is required; the label is for your reference.</p>
           {configLoading ? (
             <div className="text-xs text-muted-foreground">Loading...</div>
           ) : (
@@ -341,8 +374,8 @@ export function SlackSettings() {
               {channels.map((ch, i) => (
                 <div key={i} className="flex items-center gap-2">
                   <input
-                    className="flex-1 rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
-                    placeholder="Group name (e.g. leadership)"
+                    className="w-36 shrink-0 rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm font-mono outline-none"
+                    placeholder="C01ABC123"
                     value={ch.key}
                     onChange={(e) => {
                       const next = [...channels];
@@ -350,10 +383,9 @@ export function SlackSettings() {
                       setChannels(next);
                     }}
                   />
-                  <span className="text-muted-foreground text-xs">→</span>
                   <input
-                    className="flex-1 rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm font-mono outline-none"
-                    placeholder="Channel ID (e.g. C01ABC123)"
+                    className="flex-1 rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
+                    placeholder="Label (e.g. engineering)"
                     value={ch.value}
                     onChange={(e) => {
                       const next = [...channels];
@@ -368,12 +400,12 @@ export function SlackSettings() {
                   >
                     <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
                   </Button>
-                  {ch.value && (
+                  {ch.key && (
                     <Button
                       size="sm"
                       variant="outline"
                       disabled={testMessageMutation.isPending}
-                      onClick={() => testMessageMutation.mutate(ch.value)}
+                      onClick={() => testMessageMutation.mutate(ch.key)}
                     >
                       <Send className="h-3 w-3 mr-1" />
                       Test
@@ -411,6 +443,45 @@ export function SlackSettings() {
           )}
         </Button>
       </div>
+
+      {/* Channel → Agent Summary */}
+      {channels.length > 0 && channels.some((ch) => ch.key.trim()) && (
+        <div className="space-y-4">
+          <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Channel Overview</div>
+          <div className="rounded-md border border-border divide-y divide-border">
+            {channels.filter((ch) => ch.key.trim()).map((ch) => {
+              const agents = channelAgentMap[ch.key.trim()] ?? [];
+              return (
+                <div key={ch.key} className="px-4 py-2.5 flex items-center gap-3">
+                  <div className="min-w-0 shrink-0">
+                    <span className="text-xs font-medium">{ch.value || ch.key}</span>
+                    {ch.value && (
+                      <span className="ml-1.5 text-[10px] font-mono text-muted-foreground">{ch.key}</span>
+                    )}
+                  </div>
+                  <span className="text-muted-foreground text-xs">→</span>
+                  <div className="flex-1 min-w-0">
+                    {agents.length === 0 ? (
+                      <span className="text-[10px] text-muted-foreground italic">No agents assigned</span>
+                    ) : (
+                      <div className="flex flex-wrap gap-1.5">
+                        {agents.map((a) => (
+                          <span key={a.agentId} className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[10px]">
+                            {a.iconUrl && (
+                              <img src={a.iconUrl} alt="" className="h-3 w-3 rounded-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                            )}
+                            {a.displayName || a.agentName}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Agent Personas */}
       <div className="space-y-4">
@@ -487,18 +558,31 @@ export function SlackSettings() {
                           )}
                         </div>
                       </Field>
-                      <Field label="Assigned channels" hint="Comma-separated Slack channel IDs (e.g. C01ABC123, C02DEF456).">
-                        <input
-                          className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm font-mono outline-none"
-                          value={edit.channels}
-                          onChange={(e) =>
-                            setPersonaEdits((prev) => ({
-                              ...prev,
-                              [persona.agentId]: { ...prev[persona.agentId]!, channels: e.target.value },
-                            }))
-                          }
-                          placeholder="C01ABC123, C02DEF456"
-                        />
+                      <Field label="Channels" hint="Select which channels this agent participates in.">
+                        {configuredChannelIds.length === 0 ? (
+                          <p className="text-xs text-muted-foreground italic">No channels configured yet. Add channels above first.</p>
+                        ) : (
+                          <div className="space-y-1.5">
+                            {configuredChannelIds.map((chId) => {
+                              const label = channelLookup[chId];
+                              const checked = edit.channelIds.includes(chId);
+                              return (
+                                <label key={chId} className="flex items-center gap-2 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={() => togglePersonaChannel(persona.agentId, chId)}
+                                    className="h-3.5 w-3.5 rounded border-border"
+                                  />
+                                  <span className="text-sm">
+                                    {label && <span>{label} </span>}
+                                    <code className="text-[10px] font-mono text-muted-foreground">{chId}</code>
+                                  </span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
                       </Field>
                       <div className="flex items-center gap-2 pt-1">
                         <Button
@@ -525,7 +609,7 @@ export function SlackSettings() {
                           key={ch}
                           className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[10px] font-mono text-muted-foreground"
                         >
-                          {ch}
+                          {channelLookup[ch] ? `${channelLookup[ch]} (${ch})` : ch}
                         </span>
                       ))}
                     </div>

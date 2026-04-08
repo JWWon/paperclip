@@ -750,7 +750,9 @@ export function AgentDetail() {
               ? "runs"
               : activeView === "budget"
                 ? "budget"
-              : "dashboard";
+                : activeView === "slack"
+                  ? "slack"
+                  : "dashboard";
     if (routeAgentRef !== canonicalAgentRef || urlTab !== canonicalTab) {
       navigate(`/agents/${canonicalAgentRef}/${canonicalTab}`, { replace: true });
       return;
@@ -1163,31 +1165,46 @@ function AgentSlackPersonaSection({ companyId, agentId, agentName }: { companyId
   const { pushToast } = useToast();
   const queryClient = useQueryClient();
   const PERSONAS_KEY = ["slack", "personas", companyId] as const;
+  const CONFIG_KEY = ["slack", "config", companyId] as const;
 
   const { data: personas, isLoading } = useQuery({
     queryKey: PERSONAS_KEY,
     queryFn: () => slackApi.getPersonas(companyId),
   });
 
+  const { data: slackConfig } = useQuery({
+    queryKey: CONFIG_KEY,
+    queryFn: () => slackApi.getConfig(companyId),
+  });
+
   const persona = personas?.find((p) => p.agentId === agentId);
 
   const [displayName, setDisplayName] = useState(persona?.displayName ?? "");
   const [iconUrl, setIconUrl] = useState(persona?.iconUrl ?? "");
-  const [channels, setChannels] = useState((persona?.slackChannelIds ?? []).join(", "));
+  const [selectedChannelIds, setSelectedChannelIds] = useState<string[]>(persona?.slackChannelIds ?? []);
 
   useEffect(() => {
     if (!persona) return;
     setDisplayName(persona.displayName);
     setIconUrl(persona.iconUrl ?? "");
-    setChannels((persona.slackChannelIds ?? []).join(", "));
+    setSelectedChannelIds(persona.slackChannelIds ?? []);
   }, [persona]);
+
+  // Build channel lookup from config: { channelId: label }
+  const configuredChannels = Object.entries(slackConfig?.channels ?? {});
+
+  function toggleChannel(channelId: string) {
+    setSelectedChannelIds((prev) =>
+      prev.includes(channelId) ? prev.filter((id) => id !== channelId) : [...prev, channelId],
+    );
+  }
 
   const saveMutation = useMutation({
     mutationFn: () =>
       slackApi.updatePersona(companyId, agentId, {
         displayName,
         iconUrl: iconUrl || null,
-        slackChannelIds: channels.split(",").map((s) => s.trim()).filter(Boolean),
+        slackChannelIds: selectedChannelIds,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: PERSONAS_KEY });
@@ -1240,14 +1257,30 @@ function AgentSlackPersonaSection({ companyId, agentId, agentName }: { companyId
           </div>
         </div>
         <div className="space-y-1">
-          <label className="text-xs font-medium">Assigned channels</label>
-          <input
-            className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm font-mono outline-none"
-            value={channels}
-            onChange={(e) => setChannels(e.target.value)}
-            placeholder="C01ABC123, C02DEF456"
-          />
-          <p className="text-xs text-muted-foreground">Comma-separated Slack channel IDs this agent monitors.</p>
+          <label className="text-xs font-medium">Channels</label>
+          {configuredChannels.length === 0 ? (
+            <p className="text-xs text-muted-foreground italic">
+              No channels configured. <Link to={`/company/slack`} className="underline">Add channels</Link> in Slack Settings first.
+            </p>
+          ) : (
+            <div className="space-y-1.5 mt-1">
+              {configuredChannels.map(([chId, label]) => (
+                <label key={chId} className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={selectedChannelIds.includes(chId)}
+                    onChange={() => toggleChannel(chId)}
+                    className="h-3.5 w-3.5 rounded border-border"
+                  />
+                  <span className="text-sm">
+                    {label && <span>{label} </span>}
+                    <code className="text-[10px] font-mono text-muted-foreground">{chId}</code>
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
+          <p className="text-xs text-muted-foreground mt-1">Select which Slack channels this agent participates in.</p>
         </div>
         <Button size="sm" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
           {saveMutation.isPending ? "Saving..." : "Save"}

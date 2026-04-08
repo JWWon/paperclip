@@ -41,7 +41,7 @@ export class SlackBridgeService {
         // Route by channel — same logic as before
         const configs = await this.getEnabledCompanyConfigs();
         for (const companyConfig of configs) {
-          const channelIds = Object.values(
+          const channelIds = Object.keys(
             (companyConfig.channels as Record<string, string>) ?? {},
           );
           if (channelIds.includes(event.channelId)) {

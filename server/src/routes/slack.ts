@@ -4,6 +4,7 @@ import type { Db } from "@paperclipai/db";
 import { slackCompanyConfig } from "@paperclipai/db";
 import { assertCompanyAccess } from "./authz.js";
 import { getSlackBridge } from "../services/slack-bridge/index.js";
+import { normalizeChannels } from "../services/slack-bridge/normalize-channels.js";
 import { logger } from "../middleware/logger.js";
 import { secretService } from "../services/secrets.js";
 import { logActivity } from "../services/activity-log.js";
@@ -47,9 +48,10 @@ export function slackRoutes(db: Db) {
       return;
     }
 
-    const { appTokenSecretId, botTokenSecretId, ...safeConfig } = config;
+    const { appTokenSecretId, botTokenSecretId, channels: rawChannels, ...safeConfig } = config;
     res.json({
       ...safeConfig,
+      channels: normalizeChannels(rawChannels as Record<string, string>),
       appTokenConfigured: appTokenSecretId != null,
       botTokenConfigured: botTokenSecretId != null,
     });
@@ -60,12 +62,14 @@ export function slackRoutes(db: Db) {
     const { companyId } = req.params;
     assertCompanyAccess(req, companyId);
 
-    const { enabled, channels, appToken, botToken } = req.body as {
+    const { enabled, channels: rawChannels, appToken, botToken } = req.body as {
       enabled?: boolean;
       channels?: Record<string, string>;
       appToken?: string;
       botToken?: string;
     };
+    // Normalize channels to canonical {channelId: label} format on write
+    const channels = rawChannels ? normalizeChannels(rawChannels) : undefined;
 
     const actor = { userId: req.actor.userId ?? "board" };
 
@@ -92,7 +96,7 @@ export function slackRoutes(db: Db) {
         .update(slackCompanyConfig)
         .set({
           enabled: (patch.enabled as boolean | undefined) ?? existing.enabled,
-          channels: (patch.channels as Record<string, string> | undefined) ?? existing.channels,
+          channels: (patch.channels as Record<string, string> | undefined) ?? normalizeChannels(existing.channels as Record<string, string>),
           appTokenSecretId: (patch.appTokenSecretId as string | undefined) ?? existing.appTokenSecretId,
           botTokenSecretId: (patch.botTokenSecretId as string | undefined) ?? existing.botTokenSecretId,
           updatedAt: new Date(),
@@ -134,9 +138,10 @@ export function slackRoutes(db: Db) {
       await bridge.refreshCompany(companyId);
     }
 
-    const { appTokenSecretId: _a, botTokenSecretId: _b, ...safeConfig } = config;
+    const { appTokenSecretId: _a, botTokenSecretId: _b, channels: putRawChannels, ...safeConfig } = config;
     res.json({
       ...safeConfig,
+      channels: normalizeChannels(putRawChannels as Record<string, string>),
       appTokenConfigured: _a != null,
       botTokenConfigured: _b != null,
     });
@@ -202,7 +207,7 @@ export function slackRoutes(db: Db) {
     res.json({
       connected,
       enabled: config?.enabled ?? false,
-      channels: config?.channels ?? {},
+      channels: normalizeChannels(config?.channels as Record<string, string>),
     });
   });
 
